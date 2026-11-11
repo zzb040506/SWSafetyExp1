@@ -1,0 +1,56 @@
+// NPS Sniffer 系统架构图（graphviz: dot -Tpng architecture.dot -o fig00_architecture.png）
+digraph NPS {
+    rankdir = TB;
+    graph [fontname = "PingFang SC", fontsize = 15, bgcolor = "white",
+           nodesep = 0.3, ranksep = 0.42, pad = 0.2];
+    node  [fontname = "PingFang SC", fontsize = 14, shape = box, style = "rounded,filled",
+           fillcolor = "#f5f7fa", color = "#8ea3b8", penwidth = 1.2];
+    edge  [fontname = "PingFang SC", fontsize = 12, color = "#5b7185", arrowsize = 0.7];
+
+    subgraph cluster_input {
+        label = "数据来源"; fontsize = 15; color = "#b9c7d4"; style = rounded;
+        { rank = same;
+          nic  [label = "网卡（实时）\nBPF 内核过滤"];
+          file [label = "pcap 文件\n（离线回放）"];
+        }
+    }
+
+    cap   [label = "CaptureEngine\nlibpcap：openLive / openOffline\nsetBpfFilter / pcap_dump", width = 3.6];
+    ana   [label = "Analyzer（后台线程 + 有界队列）\n报文存储 · 协议计数 · 分层 · 会话", width = 4.2];
+
+    subgraph cluster_core {
+        label = "nps_core（与界面无关的静态库）"; fontsize = 15; color = "#b9c7d4"; style = rounded;
+        { rank = same;
+          dis   [label = "Dissector\nEthernet · VLAN · ARP\nIPv4 · IPv6 · ICMP\nTCP · UDP\nDNS · HTTP · TLS-SNI", width = 2.5];
+          track [label = "StreamTracker\n五元组归并 · SEQ 重排\n乱序/重传 · HTTP 还原\n握手 RTT", width = 2.5];
+          proc  [label = "ProcessMap\nlsof · /proc/net/tcp\nGetExtendedTcpTable", width = 2.3];
+        }
+    }
+
+    subgraph cluster_ui {
+        label = "前端"; fontsize = 15; color = "#b9c7d4"; style = rounded;
+        { rank = same;
+          gui [label = "nps-gui（SDL2 + Dear ImGui）\n报文列表 · 字段树 · 十六进制\nTCP 流 · 分层 · 会话 · 进程", width = 3.2];
+          cli [label = "nps-cli\n批量分析 · JSON\n实时抓包 · 落盘", width = 2.0];
+        }
+    }
+
+    filt [label = "DisplayFilter\n类 Wireshark 表达式\nand / or / not / 比较", fillcolor = "#eaf2fb", color = "#6f93b8", width = 2.6];
+
+    // 让“前端”整体落在核心模块下方，避免整图过宽
+
+    nic  -> cap;
+    file -> cap;
+    cap  -> ana [label = "RawPacket"];
+    ana  -> dis [label = "Packet&"];
+    ana  -> track [label = "解析后的报文"];
+    ana  -> proc [label = "每 2 s 刷新"];
+    dis  -> track [label = "appProto", constraint = false];
+    proc -> gui  [style = invis];
+    ana  -> gui  [label = "加锁快照", constraint = false];
+    ana  -> cli  [constraint = false];
+    gui  -> filt [style = dashed, label = "表达式"];
+    cli  -> filt [style = dashed];
+    filt -> gui  [style = dashed, constraint = false];
+    filt -> cli  [style = dashed, constraint = false];
+}
