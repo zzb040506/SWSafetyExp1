@@ -277,7 +277,7 @@ nps-cli --list-devices
 
 ## 4.1 测试样本
 
-样本由 `tests/gen_pcap.py` 以纯 Python 手工构造（不依赖 scapy），便于复现：
+样本由 `tests/gen_pcap.py` 以纯 Python 手工构造（不依赖 scapy），执行 `python3 gen_pcap.py . --perf` 即可复现全部样本：
 
 | 文件 | 内容 | 验证点 |
 |---|---|---|
@@ -417,8 +417,8 @@ ID 客户端                 服务端                状态     报文 载荷�
 
 ```bash
 # 逐帧输出 JPEG（默认 24 fps / 34 s），再用 ffmpeg 合成
-./nps-gui --read tests/http_basic.pcap --record rec
-ffmpeg -y -framerate 24 -i rec/frame_%05d.jpg -vf scale=1480:-2 \
+./nps-gui --read tests/http_basic.pcap --record rec --record-fps 20
+ffmpeg -y -framerate 20 -i rec/frame_%05d.jpg -vf scale=1480:-2 \
        -c:v libx264 -pix_fmt yuv420p -crf 20 play.mp4
 ```
 
@@ -446,10 +446,10 @@ ffmpeg -y -framerate 24 -i rec/frame_%05d.jpg -vf scale=1480:-2 \
 
 ```bash
 mkdir build && cd build
-cmake ../占智博_202618018629010_ex1A_src && make -j8
+cmake .. && make -j8
 ./nps-cli --read ../tests/http_basic.pcap --streams --http
 ./nps-gui --read ../tests/http_basic.pcap
-sudo ./nps-gui --device en0            # 实时抓包需要 root
+sudo ./nps-gui --device en0
 ```
 
 # 附录 B　代码规模
