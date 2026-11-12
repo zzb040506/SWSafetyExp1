@@ -76,6 +76,10 @@ if(SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
         third_party/stb
     )
     target_link_libraries(nps-gui PRIVATE nps_core ${SDL2_LIBRARY})
+    if(NOT MSVC)
+        # stb_image_write 等第三方头文件里的 sprintf 用法与本项目无关，单独屏蔽
+        target_compile_options(nps-gui PRIVATE -Wno-deprecated-declarations)
+    endif()
     if(APPLE)
         set_target_properties(nps-gui PROPERTIES MACOSX_BUNDLE FALSE)
     endif()

@@ -488,12 +488,28 @@ ID 客户端                 服务端                状态     报文 载荷�
 
 # 7　演示视频与复现方式
 
-演示视频 `占智博_202618018629010_ex1A_play.mp4` 记录了一次完整的交互过程：
-载入 `http_basic.pcap` → 选中 HTTP 请求观察字段树与十六进制联动 → 切到 TCP 流页查看
-握手 RTT 与 HTTP 还原 → 打开 `tcp_reorder.pcap` 查看重传/乱序高亮 → 打开 `mixed.pcap`
-查看 DNS 与 TLS SNI → 用 `http or dns` 过滤 → 查看协议分层、会话统计与 TCP 流表。
+演示视频 `占智博_202618018629010_ex1A_play.mp4`（53 秒）分三段：片头 → 从零编译与命令行测试 →
+图形界面演示。
 
-视频由程序自带的录制模式生成，脚本化、可复现，不依赖屏幕录制权限：
+编译与测试段是 macOS 14.7.6（arm64、Apple clang 16）上的真实终端输出，全部命令与结果可见：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release     # 配置，生成 Makefile
+cmake --build build -j8                            # 编译 nps-cli 与 nps-gui，无 warning
+./build/nps-cli --read tests/http_basic.pcap                              # 基本抓包与 HTTP 还原
+./build/nps-cli --read tests/http_basic.pcap --filter "http and port == 80"   # 显示过滤器
+./build/nps-cli --read tests/tcp_reorder.pcap --streams --quiet           # TCP 流表：重传 1、乱序 2
+./build/nps-cli --read tests/mixed.pcap --filter "icmp or ipv6"           # 跨协议、跨版本过滤
+./build/nps-cli --read tests/tcp_reorder.pcap --annotate frame_labels.tsv --quiet
+luac -p tools/wireshark/nps.lua                    # Wireshark 插件语法检查
+```
+
+图形界面段记录了一次完整的交互过程：载入 `http_basic.pcap` → 选中 HTTP 请求观察字段树与
+十六进制联动 → 切到 TCP 流页查看握手 RTT、HTTP 还原与流时序图 → 打开 `tcp_reorder.pcap`
+查看重传/乱序高亮 → 打开 `mixed.pcap` 查看 DNS 与 TLS SNI → 用 `http or dns` 过滤 →
+查看协议分层、会话统计与 TCP 流表。
+
+界面部分由程序自带的录制模式生成，脚本化、可复现，不依赖屏幕录制权限：
 
 ```bash
 # 逐帧输出 JPEG（默认 24 fps / 34 s），再用 ffmpeg 合成
