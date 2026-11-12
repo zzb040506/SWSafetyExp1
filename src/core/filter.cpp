@@ -338,7 +338,7 @@ std::string stringField(const Packet& p, const std::string& f) {
     if (f == "frame.protocols") return p.appProto;
     if (f == "proc.name") return p.procName;
     if (f == "tcp" || f == "udp" || f == "http" || f == "dns" || f == "tls" || f == "icmp" ||
-        f == "icmpv6" || f == "arp" || f == "ip" || f == "ipv6") {
+        f == "icmpv6" || f == "arp" || f == "ip" || f == "ipv4" || f == "ipv6") {
         (void)f;
         return std::string();
     }
@@ -373,7 +373,7 @@ bool evalAtom(const Ast& a, const Packet& p) {
         if (f == "icmp") return p.l4 == L4Proto::Icmp;
         if (f == "icmpv6") return p.l4 == L4Proto::Icmpv6;
         if (f == "arp") return p.l3 == L3Proto::Arp;
-        if (f == "ip") return p.l3 == L3Proto::IPv4;
+        if (f == "ip" || f == "ipv4") return p.l3 == L3Proto::IPv4;
         if (f == "ipv6") return p.l3 == L3Proto::IPv6;
         if (f == "eth") return p.hasEth;
         if (f == "http") return p.appProto == "HTTP";

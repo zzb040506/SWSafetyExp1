@@ -190,7 +190,8 @@ while (o + 4 <= std::min<size_t>(o + extLen, c.len)) {   // 遍历扩展
 `and/or/not`、括号、比较运算（`== != > < >= <=`）、`contains`，
 字段覆盖 `ip.src/ip.dst/ip.addr`、`ipv6.*`、`eth.src/eth.dst`、`tcp.port/tcp.stream/tcp.flags`、
 `udp.port`、`frame.len/frame.number`、`http.host/http.request.method/http.response.code`、
-`proc.pid/proc.name` 等，以及 `tcp/udp/http/dns/tls/icmp/arp/ip/ipv6` 这类协议布尔判断。
+`proc.pid/proc.name` 等，以及 `tcp/udp/http/dns/tls/icmp/icmpv6/arp/ip/ipv4/ipv6`
+这类协议布尔判断（`ip` 与 `ipv4` 等价）。
 
 实现分三步：词法分析（处理 `&&`/`||`/`!` 到 `and`/`or`/`not` 的别名、字符串引号与转义）→
 递归下降构造 AST（`or → and → not → primary`）→ 逐包求值。
