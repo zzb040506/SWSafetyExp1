@@ -184,6 +184,18 @@ void StreamTracker::process(Packet& p) {
     if (ooo) s.outOfOrder++;
     p.streamId = s.id;
 
+    if (e.events.size() < kMaxStreamEvents) {
+        TcpEvent ev;
+        ev.t = p.ts;
+        ev.fromClient = srcIsClient;
+        ev.seq = p.seq;
+        ev.len = static_cast<uint16_t>(p.payloadLength);
+        ev.flags = p.tcpFlags;
+        ev.retransmission = retrans;
+        ev.outOfOrder = ooo;
+        e.events.push_back(ev);
+    }
+
     detectAppProto(e);
 }
 
@@ -385,6 +397,13 @@ void StreamTracker::detectAppProto(Entry& e) {
     if (startsWithTls(up) || startsWithTls(down)) {
         e.stream.appProtoDetected = "TLS";
     }
+}
+
+std::vector<TcpEvent> StreamTracker::events(int64_t id) const {
+    for (const auto& e : entries_) {
+        if (e.stream.id == id) return e.events;
+    }
+    return {};
 }
 
 std::vector<TcpStream> StreamTracker::snapshot() const {

@@ -98,6 +98,17 @@ struct Packet {
     std::string endpointDst() const;
 };
 
+// 单条 TCP 报文在流内的时序事件（供 GUI 画时序图）
+struct TcpEvent {
+    double t = 0.0;
+    bool fromClient = true;
+    uint32_t seq = 0;
+    uint16_t len = 0;
+    uint8_t flags = 0;
+    bool retransmission = false;
+    bool outOfOrder = false;
+};
+
 // TCP 流统计与重组状态
 struct TcpStream {
     int64_t id = 0;

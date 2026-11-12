@@ -52,6 +52,7 @@ public:
     const std::deque<Packet>& packetsUnlocked() const { return packets_; }
     CaptureStats statsUnlocked() const { return stats_; }
     std::vector<TcpStream> streamsUnlocked() const { return tracker_.snapshot(); }
+    std::vector<TcpEvent> streamEventsUnlocked(int64_t id) const { return tracker_.events(id); }
     std::string reassembledUnlocked(int64_t id, bool fromClient) const {
         return tracker_.reassembled(id, fromClient);
     }

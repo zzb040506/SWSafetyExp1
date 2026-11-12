@@ -46,6 +46,7 @@ private:
     void drawHexView(const ImVec2& size);
     void drawSidePanel(const ImVec2& size);
     void drawStreamTable();
+    void drawSequenceDiagram();
     void drawHierarchy();
     void drawConversations();
     void drawProcessTable();

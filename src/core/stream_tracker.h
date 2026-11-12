@@ -26,7 +26,11 @@ public:
     // 流内字节（用于 GUI 展示），最多保留 kMaxRetainedBytes
     std::string reassembled(int64_t id, bool fromClient) const;
 
+    // 该流的逐包时序事件（用于 GUI 时序图）
+    std::vector<TcpEvent> events(int64_t id) const;
+
     static constexpr size_t kMaxRetainedBytes = 512 * 1024;
+    static constexpr size_t kMaxStreamEvents = 4000;
 
 private:
     struct Direction {
@@ -47,6 +51,7 @@ private:
         Direction fromServer;
         bool clientKnown = false;
         double synTime = -1.0;
+        std::vector<TcpEvent> events;
     };
 
     static std::string canonicalKey(const Packet& p);

@@ -524,7 +524,13 @@ void SnifferApp::drawStreamTable() {
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
                                   ImGuiTableFlags_Resizable;
     const float S = ImGui::GetFontSize() / 16.0f;
-    if (ImGui::BeginTable("##streams", 10, flags, ImGui::GetContentRegionAvail())) {
+    // 默认选中第一条流，让时序图一打开就有内容
+    if (selectedStream_ < 0 && !streamCache_.empty()) selectedStream_ = 0;
+    const bool showSeq =
+        selectedStream_ >= 0 && selectedStream_ < static_cast<int>(streamCache_.size());
+    ImVec2 tableSize = ImGui::GetContentRegionAvail();
+    if (showSeq) tableSize.y *= 0.5f;
+    if (ImGui::BeginTable("##streams", 10, flags, tableSize)) {
         ImGui::TableSetupScrollFreeze(1, 1);
         ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 48 * S);
         ImGui::TableSetupColumn("应用", ImGuiTableColumnFlags_WidthFixed, 60 * S);
@@ -586,8 +592,92 @@ void SnifferApp::drawStreamTable() {
         }
         ImGui::EndTable();
     }
-    ImGui::TextDisabled("共 %d 条 TCP 流（双击某行按 tcp.stream 过滤）",
+    ImGui::TextDisabled("共 %d 条 TCP 流（双击某行按 tcp.stream 过滤，单击查看时序图）",
                         static_cast<int>(streamCache_.size()));
+    if (showSeq) drawSequenceDiagram();
+}
+
+// TCP 标志位缩写，如 "SA"、"A"、"FPA"
+static const char* tcpFlagText(uint8_t f, char* buf, size_t n) {
+    size_t k = 0;
+    auto put = [&](uint8_t bit, char c) {
+        if ((f & bit) && k + 1 < n) buf[k++] = c;
+    };
+    put(nps::TcpFlags::Syn, 'S');
+    put(nps::TcpFlags::Ack, 'A');
+    put(nps::TcpFlags::Fin, 'F');
+    put(nps::TcpFlags::Rst, 'R');
+    put(nps::TcpFlags::Psh, 'P');
+    put(nps::TcpFlags::Urg, 'U');
+    buf[k] = '\0';
+    return k == 0 ? "-" : buf;
+}
+
+// 选中流的时序图：左右两条生命线，箭头方向表示报文方向，红/橙标注重传与乱序
+void SnifferApp::drawSequenceDiagram() {
+    if (selectedStream_ < 0 || selectedStream_ >= static_cast<int>(streamCache_.size())) return;
+    const nps::TcpStream& s = streamCache_[static_cast<size_t>(selectedStream_)];
+    std::vector<nps::TcpEvent> evs;
+    {
+        auto lk = analyzer_.lock();
+        evs = analyzer_.streamEventsUnlocked(s.id);
+    }
+    if (evs.empty()) return;
+
+    const float S = ImGui::GetFontSize() / 16.0f;
+    ImGui::BeginChild("##seqdiag", ImVec2(0, 300 * S), true,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float rowH = 22 * S;
+    const float headH = 30 * S;
+    float width = ImGui::GetContentRegionAvail().x - 4 * S;
+    const float need = 460 * S;
+    if (width < need) width = need;
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float xL = origin.x + 30 * S;
+    const float xR = origin.x + width - 30 * S;
+    const float top = origin.y + headH;
+    const float bottom = top + rowH * static_cast<float>(evs.size());
+
+    const ImU32 lineCol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    dl->AddLine(ImVec2(xL, top), ImVec2(xL, bottom), lineCol, 1.5f);
+    dl->AddLine(ImVec2(xR, top), ImVec2(xR, bottom), lineCol, 1.5f);
+
+    const std::string left =
+        s.clientIp + ":" + std::to_string(s.clientPort) + "（客户端）";
+    const std::string right =
+        s.serverIp + ":" + std::to_string(s.serverPort) + "（服务端）";
+    dl->AddText(ImVec2(xL - 24 * S, origin.y + 4 * S), textCol, left.c_str());
+    dl->AddText(ImVec2(xR - 46 * S, origin.y + 4 * S), textCol, right.c_str());
+
+    for (size_t i = 0; i < evs.size(); ++i) {
+        const nps::TcpEvent& ev = evs[i];
+        const float y = top + rowH * static_cast<float>(i) + rowH * 0.5f;
+        const float x0 = ev.fromClient ? xL : xR;
+        const float x1 = ev.fromClient ? xR : xL;
+        const ImU32 col = ev.retransmission ? IM_COL32(214, 64, 64, 255)
+                          : ev.outOfOrder  ? IM_COL32(226, 148, 40, 255)
+                                           : IM_COL32(70, 130, 200, 255);
+        dl->AddLine(ImVec2(x0, y), ImVec2(x1, y), col, 1.6f);
+        const float dir = (x1 > x0) ? 1.0f : -1.0f;
+        dl->AddTriangleFilled(ImVec2(x1, y), ImVec2(x1 - 8 * S * dir, y - 4 * S),
+                              ImVec2(x1 - 8 * S * dir, y + 4 * S), col);
+
+        char flags[8];
+        const std::string label = std::string("[") + tcpFlagText(ev.flags, flags, sizeof(flags)) +
+                                  "] " + std::to_string(ev.len) + " B";
+        const float tw = ImGui::CalcTextSize(label.c_str()).x;
+        dl->AddText(ImVec2((xL + xR) * 0.5f - tw * 0.5f, y - rowH * 0.46f), col, label.c_str());
+
+        if (ev.retransmission || ev.outOfOrder) {
+            const char* tag = ev.retransmission ? "重传" : "乱序";
+            dl->AddText(ImVec2(ev.fromClient ? x1 + 6 * S : x1 - 34 * S, y - 7 * S), col, tag);
+        }
+    }
+    ImGui::Dummy(ImVec2(width, bottom - origin.y + 8 * S));
+    ImGui::EndChild();
 }
 
 void SnifferApp::drawHierarchy() {
