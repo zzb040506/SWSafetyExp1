@@ -58,7 +58,7 @@ header-includes: |
 |:-------|:-----------------|:--------------------------------------------------------------------|:-----------------------|
 | 及格 | 能捕获并显示数据包 | libpcap 实时抓包 + 离线 pcap 回放；报文列表显示序号、时间、源/目的、协议、长度、摘要 | 4 个测试 pcap 回放；`sudo nps-cli --live en0` 实测 14 008 条真实报文（4.4 节） |
 | 基础 | 协议分析（NPA） | Ethernet/802.1Q、VLAN、ARP、IPv4/IPv6、ICMP/ICMPv6、TCP（含选项）、UDP、DNS、HTTP、TLS(SNI)，共 13 类协议，字段树 + 十六进制联动 | 图 1–图 6 与第 5 节功能测试 |
-| 加分 | TCP 流追踪 / 进程级归因 / Wireshark 二次开发（任选） | 实现了前两项，并额外提供自研 GUI：五元组流归并、SEQ 重排、乱序/重传判定、握手 RTT、HTTP 请求/响应还原；macOS/Linux/Windows 三平台进程归因 | 图 2、图 3 与 5.2 节的乱序/重传统计 |
+| 加分 | TCP 流追踪 / 进程级归因 / Wireshark 二次开发（任选） | 三项均已实现：五元组流归并、SEQ 重排、乱序/重传判定、握手 RTT、HTTP 请求/响应还原；三平台进程归因；Wireshark Lua 插件 `tools/wireshark/nps.lua` 把进程名、流编号、重传/乱序判定注册为可过滤字段 `nps.*` | 图 2、图 3、4.2 节与 3.8 节 |
 | 工程性 | 代码开源、保留 Git 记录 | 源码独立 `git` 仓库并公开托管于 GitHub（`main` 分支，含构建脚本与测试样本生成器） | `git log` |
 
 代码仓库地址：<https://github.com/zzb040506/SWSafetyExp1>。
@@ -272,12 +272,48 @@ HTTP 还原采用增量解析：以 `\r\n\r\n` 定位首部结束，再按 `Tran
 
 ```
 nps-cli --read <file.pcap> [--bpf expr] [--filter expr] [--streams] [--http] [--procs] [--json]
+nps-cli --read <file.pcap> --annotate out.tsv      # 供 Wireshark Lua 插件读取
 nps-cli --live <device> --seconds 10 [--dump out.pcap] [--bpf "tcp port 443"]
 nps-cli --list-devices
 ```
 
 `--json` 输出机器可读的汇总（报文数、各协议计数、流数、重传/乱序数、分层与会话表），
 便于和 Wireshark 的 `tshark` 统计结果做对照。
+
+## 3.8 面向 Wireshark 的二次开发
+
+Wireshark 提供 Lua 扩展接口，可以在不改其源码的前提下注册新协议与新字段。
+本实现借此把自研工具独有的分析结果——进程归因、TCP 流编号、重传/乱序判定——
+注入 Wireshark，使它们在过滤栏里成为与 `ip.src` 同级的可过滤字段。
+
+数据通路分两步：
+
+1. `nps-cli --read x.pcap --procs --annotate x.tsv` 输出逐帧旁路标注，
+   每行对应一个 pcap 帧：`frame / stream / retrans / out_of_order / pid / proc`；
+2. 插件 `tools/wireshark/nps.lua` 以 `register_postdissector` 挂到解析末段，
+   用 `Field.new("frame.number")` 取当前帧号查表，再把结果写入自定义字段。
+
+插件注册的字段与用法：
+
+| 字段 | 含义 | 典型过滤表达式 |
+|:----|:--------------------------------|:----------------------------|
+| `nps.stream` | 该帧所属 TCP 流编号 | `nps.stream == 3` |
+| `nps.tcp.retransmission` | 本工具的独立重传判定 | `nps.tcp.retransmission == 1` |
+| `nps.tcp.out_of_order` | 本工具的独立乱序判定 | `nps.tcp.out_of_order == 1` |
+| `nps.proc.pid` | 归因到的进程 PID | `nps.proc.pid == 1234` |
+| `nps.proc.name` | 归因到的进程名 | `nps.proc.name == "curl"` |
+
+安装方式：把 `nps.lua` 放入插件目录（macOS/Linux 为 `~/.local/lib/wireshark/plugins/`，
+Windows 为 `%APPDATA%\\Wireshark\\plugins\\`），打开一次 Wireshark 后在
+“首选项 → Protocols → NPS Sniffer”里填写标注文件路径即可。这样“某进程产生的所有 TCP 流”
+不必在自研界面里另做视图，直接在 Wireshark 里用一条 `nps.proc.name == "curl"` 就能筛出，
+并且这些帧仍可用 Wireshark 原生的 `tcp.analysis.*`、`http.*` 字段继续叠加过滤。
+
+需要说明的约束：标注按 pcap 帧号一一对应，生成标注时不要给 `nps-cli` 加 `--bpf`，
+否则两侧帧号会错位；进程名只在实时抓包（`--procs` 配合 `--live`）时有值，离线 pcap 为 `-1` 与空串。
+
+插件的行为做过一次离线校验：`tcp_reorder.pcap` 生成的 10 帧标注里，第 9 帧被标为重传、
+第 4 与第 7 帧被标为乱序，与 4.2 节的统计一致；在桩环境下按帧号取标注、挂载 `nps.*` 字段均正常。
 
 # 4　测试与验证
 
@@ -477,6 +513,7 @@ ffmpeg -y -framerate 20 -i rec/frame_%05d.jpg -vf scale=1480:-2 \
 |   `-- gui/         # nps-gui（SDL2 + Dear ImGui）
 |-- third_party/     # imgui 1.91.8、stb_image_write
 |-- tests/           # 测试样本与 gen_pcap.py 生成脚本
+|-- tools/wireshark/ # Wireshark Lua 插件 nps.lua
 `-- docs/            # 本报告与截图
 ```
 
@@ -499,6 +536,7 @@ sudo ./nps-gui --device en0
 | 抓包封装 | `capture.cpp` | 253 |
 | 分析流水线 | `analyzer.cpp` | 248 |
 | GUI | `app.cpp` + `main.cpp` | 1165 |
-| CLI | `cli/main.cpp` | 362 |
+| CLI | `cli/main.cpp` | 382 |
+| Wireshark 插件 | `tools/wireshark/nps.lua` | 111 |
 | 数据结构与工具 | `types.cpp`、`util.cpp` | 221 |
-| 合计 | | 约 5000 |
+| 合计 | | 约 5100 |

@@ -31,7 +31,8 @@ void printUsage() {
         "  --http               打印还原的 HTTP 请求/响应\n"
         "  --procs              打印进程归因结果\n"
         "  --quiet              仅打印汇总\n"
-        "  --json               以 JSON 输出汇总\n");
+        "  --json               以 JSON 输出汇总\n"
+        "  --annotate <file>    导出逐帧旁路标注（TSV），供 Wireshark Lua 插件读取\n");
 }
 
 std::string jsonEscape(const std::string& s) {
@@ -52,7 +53,7 @@ std::string jsonEscape(const std::string& s) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string readPath, liveDevice, bpf, displayFilter, dumpPath;
+    std::string readPath, liveDevice, bpf, displayFilter, dumpPath, annotatePath;
     double seconds = 5.0;
     bool wantStreams = false, wantHttp = false, wantProcs = false, quiet = false, json = false;
     int wantPackets = 0;
@@ -90,6 +91,8 @@ int main(int argc, char** argv) {
             displayFilter = next("--filter");
         } else if (a == "--dump") {
             dumpPath = next("--dump");
+        } else if (a == "--annotate") {
+            annotatePath = next("--annotate");
         } else if (a == "--streams") {
             wantStreams = true;
         } else if (a == "--packets") {
@@ -175,6 +178,23 @@ int main(int argc, char** argv) {
     const auto streams = analyzer.streamsUnlocked();
     const auto hierarchy = analyzer.hierarchyUnlocked();
     const auto conversations = analyzer.conversationsUnlocked();
+
+    if (!annotatePath.empty()) {
+        std::FILE* fo = std::fopen(annotatePath.c_str(), "w");
+        if (!fo) {
+            std::fprintf(stderr, "无法写入标注文件: %s\n", annotatePath.c_str());
+            return 1;
+        }
+        std::fprintf(fo, "frame\tstream\tretrans\tout_of_order\tpid\tproc\n");
+        for (const auto& p : packets) {
+            std::fprintf(fo, "%lld\t%lld\t%d\t%d\t%d\t%s\n", static_cast<long long>(p.index),
+                         static_cast<long long>(p.streamId), p.retransmission ? 1 : 0,
+                         p.outOfOrder ? 1 : 0, p.pid, p.procName.c_str());
+        }
+        std::fclose(fo);
+        std::fprintf(stderr, "已导出逐帧标注: %s（%zu 帧）\n", annotatePath.c_str(),
+                     packets.size());
+    }
 
     uint64_t visible = 0;
     uint64_t visibleBytes = 0;
