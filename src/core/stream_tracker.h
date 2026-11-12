@@ -38,6 +38,7 @@ private:
         size_t httpParsePos = 0;
         size_t messages = 0;
         bool capped = false;
+        int64_t maxEnd = 0;  // 已见数据的最高相对序号；缓冲区封顶后用它继续判定乱序/重传
     };
 
     struct Entry {

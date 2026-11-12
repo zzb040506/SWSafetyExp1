@@ -205,11 +205,26 @@ void StreamTracker::handlePayload(Entry& e, Direction& dir, const Packet& p, int
         if (take < n) dir.capped = true;
     };
 
+    const int64_t endRel = rel + static_cast<int64_t>(len);
+
+    // 重组缓冲已封顶：改用“已见最高序号”判定，避免把后续正常报文全部误报为乱序
+    if (dir.capped) {
+        if (endRel <= dir.maxEnd) {
+            retrans = true;
+        } else if (rel > dir.maxEnd) {
+            ooo = true;
+        } else {
+            dir.maxEnd = endRel;
+        }
+        return;
+    }
+
     if (rel < 0) {
         retrans = true;
         return;
     }
     const size_t r = static_cast<size_t>(rel);
+    if (endRel > dir.maxEnd) dir.maxEnd = endRel;
     if (r < dir.data.size()) {
         const size_t overlap = dir.data.size() - r;
         if (len <= overlap) {

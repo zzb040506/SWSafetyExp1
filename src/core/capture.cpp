@@ -70,7 +70,9 @@ bool CaptureEngine::openLive(const std::string& device, std::string& error) {
     pcap_set_promisc(handle_, 1);
     pcap_set_timeout(handle_, 100);
     pcap_set_buffer_size(handle_, 16 * 1024 * 1024);
-    pcap_set_immediate_mode(handle_, 1);
+    // 注意：不要开启 immediate mode。macOS 上它会绕过读取超时，
+    // 使 pcap_loop 永久阻塞在内核 read() 里，pcap_breakloop 无法唤醒，stop() 会卡死。
+    // 保留 100 ms 超时，停止时最多等待一个超时周期。
 
     const int rc = pcap_activate(handle_);
     if (rc < 0) {
