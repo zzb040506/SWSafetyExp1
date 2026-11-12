@@ -3,6 +3,7 @@ title: "软件安全实验 1 · 实验 A：带 GUI 的网络嗅探器"
 author: "姓名：占智博　　学号：202618018629010"
 date: "2026 年 11 月"
 header-includes: |
+  \providecommand{\real}[1]{#1}
   \setCJKmonofont{PingFang SC}
   \setmonofont{Menlo}
   \usepackage{booktabs}
@@ -18,7 +19,7 @@ header-includes: |
     \begin{titlepage}
     \centering
     \vspace*{3.2cm}
-    {\Huge\bfseries \@title\par}
+    {\resizebox{\textwidth}{!}{\bfseries \@title}\par}
     \vspace{1.1cm}
     {\Large NPS Sniffer\par}
     \vspace{0.35cm}
@@ -56,9 +57,11 @@ header-includes: |
 | 评分层次 | 要求 | 本实现 | 验证方式 |
 |:-------|:-----------------|:--------------------------------------------------------------------|:-----------------------|
 | 及格 | 能捕获并显示数据包 | libpcap 实时抓包 + 离线 pcap 回放；报文列表显示序号、时间、源/目的、协议、长度、摘要 | 4 个测试 pcap 回放；`sudo nps-cli --live en0` 实测 14 008 条真实报文（4.4 节） |
-| 基础 | 协议分析（NPA） | Ethernet/802.1Q VLAN/ARP/IPv4/IPv6/ICMP/ICMPv6/TCP(含选项)/UDP/DNS/HTTP/TLS(SNI) 共 13 类协议，字段树 + 十六进制联动 | 图 1–图 6 与第 5 节功能测试 |
+| 基础 | 协议分析（NPA） | Ethernet/802.1Q、VLAN、ARP、IPv4/IPv6、ICMP/ICMPv6、TCP（含选项）、UDP、DNS、HTTP、TLS(SNI)，共 13 类协议，字段树 + 十六进制联动 | 图 1–图 6 与第 5 节功能测试 |
 | 加分 | TCP 流追踪 / 进程级归因 / Wireshark 二次开发（任选） | 实现了前两项，并额外提供自研 GUI：五元组流归并、SEQ 重排、乱序/重传判定、握手 RTT、HTTP 请求/响应还原；macOS/Linux/Windows 三平台进程归因 | 图 2、图 3 与 5.2 节的乱序/重传统计 |
-| 工程性 | 代码开源、保留 Git 记录 | 源码目录独立 `git` 仓库，含构建脚本与测试样本生成器 | `git log` |
+| 工程性 | 代码开源、保留 Git 记录 | 源码独立 `git` 仓库并公开托管于 GitHub（`main` 分支，含构建脚本与测试样本生成器） | `git log` |
+
+代码仓库地址：<https://github.com/zzb040506/SWSafetyExp1>。
 
 ## 1.2 运行环境
 
@@ -119,14 +122,14 @@ struct FieldNode {
 
 ```cpp
 pcap_set_snaplen(handle_, 262144);        // 保存完整帧，便于后续重组
-pcap_set_timeout(handle_, 100);           // 100 ms 交付一批，兼顾延迟与吞吐
+pcap_set_timeout(handle_, 100);           // 100 ms 交付一批，兼顾时延与吞吐
 pcap_set_buffer_size(handle_, 16 << 20);  // 16 MB 内核缓冲，降低高pps下的丢包
 pcap_set_promisc(handle_, 1);
 ```
 
 这里刻意**没有**开启 immediate mode：在 macOS 上它会让底层 `read()` 绕过超时永久阻塞，
 `pcap_breakloop` 无法唤醒采集线程，停止抓包时 join 会卡死（该问题在实测中暴露，见 5.6 节）。
-保留 100 ms 超时后，胶水层最多等一个超时周期即可退出，而界面感知的延迟仍在 0.1 s 量级。
+保留 100 ms 超时后，胶水层最多等一个超时周期即可退出，而界面感知的时延仍在 0.1 s 量级。
 
 BPF 过滤器在 `pcap_activate()` 之前用 `pcap_compile/pcap_setfilter` 下发到内核，
 被过滤掉的报文不会进入用户态，这正是 BPF 相对用户态过滤的性能优势（见 6.1 节）。
@@ -233,10 +236,10 @@ HTTP 还原采用增量解析：以 `\r\n\r\n` 定位首部结束，再按 `Tran
 
 ## 3.5 进程级归因
 
-`ProcessMap` 周期性采集系统 TCP 连接表，把 (本地 IP:端口, 远端 IP:端口) 与流表匹配，
+`ProcessMap` 周期性采集系统 TCP 连接表，把 (本地 IP:端口, 对端 IP:端口) 与流表匹配，
 从而回答“这条连接属于哪个进程”。三个平台分别使用：
 
-- **macOS**：`popen("lsof -nP -iTCP")`，按 `p`/`c`/`n` 行解析 PID、进程名与 `本地->远端`；
+- **macOS**：`popen("lsof -nP -iTCP")`，按 `p`/`c`/`n` 行解析 PID、进程名与 `本地->对端`；
 - **Linux**：读取 `/proc/net/tcp` 与 `/proc/net/tcp6`（小端十六进制地址），再用
   `/proc/<pid>/fd` 的 socket inode 反查 PID；
 - **Windows**：`GetExtendedTcpTable(TCP_TABLE_OWNER_PID_ALL)` + `QueryFullProcessImageName`。
@@ -402,7 +405,7 @@ ID 客户端                 服务端                状态     报文 载荷�
 采集与 BPF 过滤是**无状态、逐包**的，因此可以下沉到内核，用最小的信息量（五元组、长度、标志）
 换最大的吞吐；解析是**单包、有界状态**的，只在用户态栈上工作，一个包解析失败不影响其它包；
 而流重组与会话统计是**跨包、长生命周期状态**的，必须处理乱序、重传、超时与内存上限，
-也是实现复杂度最高的一层。把这三类状态混在一起（例如在抓包回调里直接做重组）会导致
+也是实现难度最高的一层。把这三类状态混在一起（例如在抓包回调里直接做重组）会导致
 回调路径过长、内核缓冲溢出、丢包率上升，而且离线与实时两条路径难以复用。
 
 本项目的划分与此对应：`CaptureEngine` 只负责“拿到字节”，BPF 在 `pcap_activate` 前下发到内核；
