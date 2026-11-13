@@ -322,8 +322,45 @@ Windows 为 `%APPDATA%\\Wireshark\\plugins\\`），打开一次 Wireshark 后在
 需要说明的约束：标注按 pcap 帧号一一对应，生成标注时不要给 `nps-cli` 加 `--bpf`，
 否则两侧帧号会错位；进程名只在实时抓包（`--procs` 配合 `--live`）时有值，离线 pcap 为 `-1` 与空串。
 
-插件的行为做过一次离线校验：`tcp_reorder.pcap` 生成的 10 帧标注里，第 9 帧被标为重传、
-第 4 与第 7 帧被标为乱序，与 4.2 节的统计一致；在桩环境下按帧号取标注、挂载 `nps.*` 字段均正常。
+**端到端验证。** 在 macOS 上安装 Wireshark 4.6.9，把 `nps.lua` 放进个人插件目录后，
+`tshark` 会把它当作普通 Lua 插件加载，五个字段全部注册成功：
+
+```
+$ tshark -G plugins | grep nps
+nps.lua		Lua script	/Users/.../.local/lib/wireshark/plugins/nps.lua
+
+$ tshark -G fields | awk -F'\t' '$3 ~ /^nps\./ {print $3}'
+nps.stream / nps.tcp.retransmission / nps.tcp.out_of_order / nps.proc.pid / nps.proc.name
+```
+
+用同一份 `tcp_reorder.pcap` 生成标注后，Wireshark 侧的过滤结果与 `nps-cli` 的统计逐帧对齐：
+
+```
+$ nps-cli --read tests/tcp_reorder.pcap --annotate /tmp/reorder.tsv --quiet
+已导出逐帧标注: /tmp/reorder.tsv（10 帧）
+
+$ tshark -r tests/tcp_reorder.pcap -o nps.annotation_file:/tmp/reorder.tsv \
+         -Y "nps.tcp.retransmission" -T fields -e frame.number -e nps.stream
+NPS 插件：已从 /tmp/reorder.tsv 载入 10 帧标注
+9	0
+
+$ tshark -r tests/tcp_reorder.pcap -o nps.annotation_file:/tmp/reorder.tsv \
+         -Y "nps.tcp.out_of_order" -T fields -e frame.number
+4
+7
+```
+
+即重传 1 帧、乱序 2 帧，与 4.2 节 `nps-cli` 自身的统计完全一致——两侧读的是同一份判定，
+不是重新猜一遍。进程字段的通路也已验证：标注里填好 pid 与进程名后，
+`-Y 'nps.proc.name == "curl"'` 能准确筛出对应帧；真实的归因值只在 `--live --procs` 时产生
+（离线 pcap 的连接早已关闭，只能按 `-1`/空串记录）。
+
+与 Wireshark 原生 `tcp.analysis.*` 交叉对照时出现一处差异，值得记一笔：
+`tshark -Y "tcp.analysis.retransmission"` 命中第 8、9 帧，而本工具只认第 9 帧。
+原因是判据不同——Wireshark 依据重复 ACK 把第 8 帧标成“疑似快速重传”，
+本工具的判据是“这段字节区间此前是否已经收到过”：第 8 帧（seq 1、长度 40）是首次到达的新数据，
+第 9 帧（seq 41、长度 60）与第 4 帧完全重叠，才是字节意义上的重传。
+所以两套字段不是互相替代，而是把“启发式”与“字节区间”两种视角并排放在同一帧上。
 
 # 4　测试与验证
 
@@ -486,6 +523,25 @@ ID 客户端                 服务端                状态     报文 载荷�
 
 一句话总结：端口回答“通常会是什么”，内容回答“实际上是什么”；
 嗅探器的价值在于给出后者，并把判断依据（字段、偏移、状态）呈现出来供人复核。
+
+## 6.3 装了根证书，为什么还是有协议解析不了？
+
+根证书的作用是让**客户端愿意**跟中间人完成 TLS 握手，它换来的只是“应用层内容”这一层明文，
+而不是让嗅探器获得解密任意流量的能力。**加密只保护内容，元数据与传输行为始终暴露**——
+五元组、端口、包长、时序、握手往返、SNI 与证书链本来就在明文或可观测的握手里，
+所以装了证书之后，能多看到的只有 HTTP 请求行、Cookie 这类载荷，看不到的东西并不会变少：
+
+- **证书固定 / 双向认证**：客户端只信任内置公钥，或要求出示客户端证书，
+  中间人证书直接被拒，握手失败，链路上连可解密的会话都不存在；
+- **前向保密**：即便拿到证书，没有会话密钥也解不开已录制的历史流量（除非有 `SSLKEYLOGFILE`）；
+- **QUIC 与 ECH**：跑在 UDP 上的 TLS 1.3 把证书也加密了，SNI 又被 ECH 封装，
+  端口与首包特征之外几乎无可读字段；
+- **隧道与二次封装**：VPN、Shadowsocks、DoH/DoT 把任意协议再包一层，
+  解开的仍是一段不透明字节流，需要按隧道自身的格式再解析一次。
+
+这也解释了本项目的取舍：解析器把能在链路上直接观测的部分（分层、五元组、流状态、重传/乱序、SNI）
+做扎实，对加密载荷只呈现长度与时序，不假装能读出内容；真正要判断“这是不是同一个应用”，
+靠的是流级行为特征而不是载荷文本。
 
 # 7　演示视频与复现方式
 
